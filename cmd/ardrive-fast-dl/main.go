@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	maxRetries = 99999
-	baseDelay  = 0 * time.Second
+	//ArweaveGateway = "arweave.net"
+	ArweaveGateway = "permagate.io"
+	maxRetries     = 99999
+	baseDelay      = 0 * time.Second
 )
 
 type ArDriveEntity struct {
@@ -151,7 +153,7 @@ func downloadFile(file ArDriveEntity, folderID string) error {
 	}
 
 	log.Println("Downloading file:", file.Name)
-	resp, err := http.Get(fmt.Sprintf("https://arweave.net/%s", file.DataTxId))
+	resp, err := http.Get(fmt.Sprintf("https://%s/%s", ArweaveGateway, file.DataTxId))
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %v", err)
 	}
