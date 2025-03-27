@@ -107,7 +107,8 @@ func main() {
 	rootName := filepath.Base(absPath)
 	rootID, err := createFolder(rootName, parentFolderID, walletPath, turboEnable)
 	if err != nil {
-		log.Fatal("Create root folder failed:", err)
+		//log.Printf("Create root folder failed: ", err)
+		log.Fatal("Create root folder failed: ", err)
 	}
 	dirMap[absPath] = rootID
 	log.Printf("Created root folder: %s (%s)\n", rootName, rootID)
