@@ -79,7 +79,7 @@ func main() {
 	parentFolderID := os.Args[1]
 	localPath := os.Args[2]
 	walletPath := os.Args[3]
-	threads := 64
+	threads := 32
 	turboEnable := true
 
 	if len(os.Args) > 4 {
@@ -163,10 +163,18 @@ func main() {
 			defer wg.Done()
 			for task := range taskChan {
 				log.Printf("Uploading: %s\n", task.LocalPath)
-				if err := uploadFile(task.LocalPath, task.ParentID, walletPath, turboEnable); err != nil {
-					log.Printf("Upload failed: %s (%v)\n", task.LocalPath, err)
-				} else {
-					log.Printf("Upload success: %s\n", task.LocalPath)
+				var err error
+				const maxRetries = 99999
+				for retries := 0; retries < maxRetries; retries++ {
+					err = uploadFile(task.LocalPath, task.ParentID, walletPath, turboEnable)
+					if err == nil {
+						log.Printf("Upload success: %s\n", task.LocalPath)
+						break
+					}
+					log.Printf("Upload failed: %s (%v), retrying... (%d/%d)\n", task.LocalPath, err, retries+1, maxRetries)
+				}
+				if err != nil {
+					log.Printf("Upload permanently failed: %s (%v)\n", task.LocalPath, err)
 				}
 			}
 		}()
