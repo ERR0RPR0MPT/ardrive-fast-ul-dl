@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	maxRetries = 99999
+	baseDelay  = 0 * time.Second
 )
 
 type ArDriveEntity struct {
@@ -24,52 +32,75 @@ type ArDriveEntity struct {
 	EntityIdPath string `json:"entityIdPath"`
 }
 
-func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID string, wgDoneFlag bool) {
-	if wgDoneFlag {
-		defer wg.Done()
-	}
+func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID string) {
+	defer wg.Done()
 	for file := range tasks {
-		err := downloadFile(file, folderID)
-		if err != nil {
-			fmt.Printf("Error downloading %s: %v\n", file.Name, err)
-			worker(tasks, wg, folderID, false)
+		for {
+			err := downloadFile(file, folderID)
+			if err != nil {
+				fmt.Printf("Error downloading %s: %v\n", file.Name, err)
+				continue
+			}
+			break
 		}
 	}
 }
 
-func processFolderRecursive(folderID string) ([]ArDriveEntity, error) {
-	log.Println("获取文件夹数据:", folderID)
-	var files []ArDriveEntity
+func processFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
+	//retryDelay := baseDelay
+	log.Println("Processing folder:", folderID)
 	entities, err := listFolder(folderID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
+	g, ctx := errgroup.WithContext(context.Background())
+
 	for _, entity := range entities {
-		log.Println("获取到文件路径:", entity.Path)
+		entity := entity // Capture loop variable
 		if entity.EntityType == "folder" {
-			subFiles, err := processFolderRecursive(entity.EntityId)
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, subFiles...)
+			g.Go(func() error {
+				retryDelay := baseDelay
+				for i := 0; i < maxRetries; i++ {
+					err := processFolderRecursive(entity.EntityId, tasks)
+					if err == nil {
+						return nil
+					}
+					log.Printf("Subfolder processing attempt %d/%d failed: %v", i+1, maxRetries, err)
+					if i < maxRetries-1 {
+						time.Sleep(retryDelay)
+						retryDelay *= 2
+					}
+				}
+				return fmt.Errorf("failed to process subfolder %s after %d attempts", entity.EntityId, maxRetries)
+			})
 		} else {
-			files = append(files, entity)
+			select {
+			case tasks <- entity:
+				log.Println("Found entity path:", entity.Path)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
-	return files, nil
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func extractBetweenBraces(s string) string {
 	start := strings.Index(s, "[")
 	if start == -1 {
-		return "" // 如果没有找到 '{'，返回空字符串
+		return ""
 	}
 	end := strings.LastIndex(s, "]")
 	if end == -1 || end < start {
-		return "" // 如果没有找到 '}' 或者 '}' 在 '{' 之前，返回空字符串
+		return ""
 	}
-	return s[start : end+1] // 返回从 '{' 到 '}' 的部分，包括它们
+	return s[start : end+1]
 }
 
 func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
@@ -77,56 +108,49 @@ func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
 	cmd := exec.Command("ardrive", sArr...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err, string(output), sArr)
+		return nil, fmt.Errorf("command failed: %v, output: %s", err, string(output))
 	}
 
 	output = []byte(extractBetweenBraces(string(output)))
 
 	var entities []ArDriveEntity
 	if err := json.Unmarshal(output, &entities); err != nil {
-		return nil, fmt.Errorf("JSON parse error: %v", err, string(output))
+		return nil, fmt.Errorf("JSON parse error: %v, output: %s", err, string(output))
 	}
 
 	return entities, nil
 }
 
 func findIndex(name string, parts []string) (bool, int) {
-	isFound := false
-	foundIndex := -1
 	for k, v := range parts {
 		if v == name {
-			isFound = true
-			foundIndex = k
+			return true, k
 		}
 	}
-	return isFound, foundIndex
+	return false, -1
 }
 
 func downloadFile(file ArDriveEntity, folderID string) error {
-	// 生成本地路径
 	cleanPath := strings.TrimPrefix(file.Path, "/")
 	pathParts := strings.Split(cleanPath, "/")
 
-	//生成相对路径
 	cleanEntityIdPath := strings.TrimPrefix(file.EntityIdPath, "/")
 	entityIdPathParts := strings.Split(cleanEntityIdPath, "/")
 
 	isFound, idx := findIndex(folderID, entityIdPathParts)
 	if !isFound {
-		return fmt.Errorf("findIndex(folderID, entityIdPathParts) error")
+		return fmt.Errorf("folderID not found in entityIdPath")
 	}
 
 	pathParts = pathParts[idx:]
 	localPath := filepath.Join(".", filepath.Join(pathParts...))
 
-	// 创建目录
 	dir := filepath.Dir(localPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create directory failed: %v", err)
+		return fmt.Errorf("failed to create directory: %v", err)
 	}
 
-	// 下载文件
-	log.Println("下载文件:", file.Name)
+	log.Println("Downloading file:", file.Name)
 	resp, err := http.Get(fmt.Sprintf("https://arweave.net/%s", file.DataTxId))
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %v", err)
@@ -137,18 +161,15 @@ func downloadFile(file ArDriveEntity, folderID string) error {
 		return fmt.Errorf("bad status: %d", resp.StatusCode)
 	}
 
-	// 创建文件
 	outFile, err := os.Create(localPath)
 	if err != nil {
-		return fmt.Errorf("file create failed: %v", err)
+		return fmt.Errorf("failed to create file: %v", err)
 	}
 	defer outFile.Close()
 
-	// 保存内容
 	if _, err := io.Copy(outFile, resp.Body); err != nil {
-		return fmt.Errorf("write file failed: %v", err)
+		return fmt.Errorf("failed to write file: %v", err)
 	}
-	//log.Println("文件下载完成:", file.Name)
 
 	log.Println("Successfully downloaded:", localPath)
 	return nil
@@ -161,48 +182,43 @@ func main() {
 	}
 	folderID := os.Args[1]
 	threads := 64
-	if len(os.Args) > 2 && len(os.Args) < 3 {
+	if len(os.Args) >= 3 {
 		var err error
 		threads, err = strconv.Atoi(os.Args[2])
 		if err != nil {
-			fmt.Println("Usage: ardrive-fast-dl <folder_id> [threads]")
-			os.Exit(1)
+			fmt.Println("Invalid threads value, using default 64")
 		}
 	}
 
 	startTime := time.Now()
 
-	// 获取所有文件
-	files, err := processFolderRecursive(folderID)
-	if err != nil {
-		fmt.Printf("Error processing folder: %v\n", err)
-		os.Exit(1)
+	tasks := make(chan ArDriveEntity, 9999)
+	processErrCh := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	// Start worker goroutines
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		go worker(tasks, &wg, folderID)
+	}
+
+	// Process folders and handle errors
+	go func() {
+		defer close(tasks)
+		processErrCh <- processFolderRecursive(folderID, tasks)
+	}()
+
+	// Wait for folder processing to complete and get error
+	processErr := <-processErrCh
+
+	// Wait for all workers to finish processing remaining tasks
+	wg.Wait()
+
+	if processErr != nil {
+		log.Fatalf("Error processing folder: %v", processErr)
 	}
 
 	endTime := time.Now()
-	elapsed := endTime.Sub(startTime)
-	log.Println("\n获取文件用时: ", elapsed, "\n")
-
-	// 创建任务通道
-	tasks := make(chan ArDriveEntity, len(files))
-	var wg sync.WaitGroup
-
-	// 启动64个worker
-	for i := 0; i < threads; i++ {
-		wg.Add(1)
-		go worker(tasks, &wg, folderID, true)
-	}
-
-	// 添加任务
-	for _, file := range files {
-		tasks <- file
-	}
-	close(tasks)
-
-	// 等待所有任务完成
-	wg.Wait()
-	endTime = time.Now()
-	elapsed = endTime.Sub(startTime)
-	fmt.Printf("执行用时: %s\n", elapsed)
+	fmt.Printf("Total execution time: %s\n", endTime.Sub(startTime))
 	fmt.Println("All downloads completed!")
 }
