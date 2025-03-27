@@ -61,10 +61,11 @@ func processFolderRecursive(folderID string) ([]ArDriveEntity, error) {
 }
 
 func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
-	cmd := exec.Command("ardrive", "list-folder", "--parent-folder-id", parentFolderID)
-	output, err := cmd.Output()
+	sArr := []string{"list-folder", "--parent-folder-id", parentFolderID}
+	cmd := exec.Command("ardrive", sArr...)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %v", err, string(output), sArr)
 	}
 
 	var entities []ArDriveEntity
