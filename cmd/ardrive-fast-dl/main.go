@@ -60,6 +60,18 @@ func processFolderRecursive(folderID string) ([]ArDriveEntity, error) {
 	return files, nil
 }
 
+func extractBetweenBraces(s string) string {
+	start := strings.Index(s, "[")
+	if start == -1 {
+		return "" // 如果没有找到 '{'，返回空字符串
+	}
+	end := strings.LastIndex(s, "]")
+	if end == -1 || end < start {
+		return "" // 如果没有找到 '}' 或者 '}' 在 '{' 之前，返回空字符串
+	}
+	return s[start : end+1] // 返回从 '{' 到 '}' 的部分，包括它们
+}
+
 func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
 	sArr := []string{"list-folder", "--parent-folder-id", parentFolderID}
 	cmd := exec.Command("ardrive", sArr...)
@@ -68,9 +80,11 @@ func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
 		return nil, fmt.Errorf("command failed: %v", err, string(output), sArr)
 	}
 
+	output = []byte(extractBetweenBraces(string(output)))
+
 	var entities []ArDriveEntity
 	if err := json.Unmarshal(output, &entities); err != nil {
-		return nil, fmt.Errorf("JSON parse error: %v", err)
+		return nil, fmt.Errorf("JSON parse error: %v", err, string(output))
 	}
 
 	return entities, nil
