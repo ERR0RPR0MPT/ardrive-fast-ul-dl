@@ -245,9 +245,9 @@ func RSSplitterDecode(inputDir, outputFile string) error {
 
 		// Reconstruct missing data shards
 		needReconstruct := false
-		for i := 0; i < dataShards; i++ {
-			if !present[i] {
-				fmt.Println("Reconstruct missing data shards index:", i)
+		for j := 0; j < dataShards; j++ {
+			if !present[j] {
+				fmt.Println("Reconstruct missing data shards index:", i+j-len(groupShards))
 				needReconstruct = true
 				break
 			}
