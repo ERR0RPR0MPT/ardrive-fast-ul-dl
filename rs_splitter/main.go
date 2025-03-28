@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	oneGigabyte          = 1 << 30                        // 1 GB = 2^30 bytes
-	oneTenthGigabyte     = oneGigabyte / 10               // 0.1 GB
-	fivePointOneGigabyte = oneGigabyte*5 + oneGigabyte/10 // 5.1 GB
-	defaultChunkSize     = 97 * 1024
-	defaultMaxFolderNum  = 74
+	oneGigabyte             = 1 << 30                        // 1 GB = 2^30 bytes
+	oneTenthGigabyte        = oneGigabyte / 10               // 0.1 GB
+	fivePointOneGigabyte    = oneGigabyte*5 + oneGigabyte/10 // 5.1 GB
+	defaultChunkSize        = 97 * 1024
+	defaultMaxFolderNum     = 74
+	defaultFileInfoJsonName = "fileInfo.json"
 )
 
 func getShardNumber(path string) int {
@@ -55,6 +56,9 @@ func GetDefaultShardsNum(filePath string) (int, int, int, error) {
 
 // CalculateShards 计算并处理 allShardsNum
 func CalculateShards(originalSize int64, chunkSize, dataShards, parityShards int) int {
+	if originalSize <= int64(chunkSize) {
+		return 3
+	}
 	allShardsNum := float64(originalSize) / float64(dataShards) * float64(dataShards+parityShards) / float64(chunkSize)
 	// 计算总的 shards 数量
 	totalShards := dataShards + parityShards
@@ -161,11 +165,11 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(outputDir, "fileInfo.json"), manifestData, 0644)
+	return os.WriteFile(filepath.Join(outputDir, defaultFileInfoJsonName), manifestData, 0644)
 }
 
 func RSSplitterDecode(inputDir, outputFile string) error {
-	manifestData, err := os.ReadFile(filepath.Join(inputDir, "fileInfo.json"))
+	manifestData, err := os.ReadFile(filepath.Join(inputDir, defaultFileInfoJsonName))
 	if err != nil {
 		return err
 	}
