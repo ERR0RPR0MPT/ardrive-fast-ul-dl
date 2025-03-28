@@ -18,6 +18,7 @@ const (
 	oneTenthGigabyte     = oneGigabyte / 10               // 0.1 GB
 	fivePointOneGigabyte = oneGigabyte*5 + oneGigabyte/10 // 5.1 GB
 	defaultChunkSize     = 97 * 1024
+	defaultMaxFolderNum  = 74
 )
 
 func getShardNumber(path string) int {
@@ -43,15 +44,13 @@ func GetDefaultShardsNum(filePath string) (int, int, int, error) {
 
 	fileSize := fileInfo.Size() // 获取文件大小，单位为字节
 
-	if fileSize < oneTenthGigabyte {
-		return 4, 1, defaultChunkSize, nil
-	} else if fileSize <= fivePointOneGigabyte {
-		// 计算默认的 data 和 parity shards
-		dataShards := int(float64(fileSize)/float64(oneTenthGigabyte)) * 4
-		parityShards := int(float64(fileSize) / float64(oneTenthGigabyte))
-		return dataShards, parityShards, defaultChunkSize, nil
-	}
-	return 204, 51, defaultChunkSize, nil
+	// 根据要求计算 a
+	a := int(math.Ceil(float64(fileSize) / defaultMaxFolderNum / defaultChunkSize))
+
+	// 计算 b
+	b := int(math.Ceil(float64(a) * 0.25))
+
+	return a, b, defaultChunkSize, nil
 }
 
 // CalculateShards 计算并处理 allShardsNum
@@ -162,11 +161,11 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(outputDir, "manifest.json"), manifestData, 0644)
+	return os.WriteFile(filepath.Join(outputDir, "fileInfo.json"), manifestData, 0644)
 }
 
 func RSSplitterDecode(inputDir, outputFile string) error {
-	manifestData, err := os.ReadFile(filepath.Join(inputDir, "manifest.json"))
+	manifestData, err := os.ReadFile(filepath.Join(inputDir, "fileInfo.json"))
 	if err != nil {
 		return err
 	}

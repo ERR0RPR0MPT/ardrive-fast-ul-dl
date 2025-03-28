@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	//ArweaveGateway = "arweave.net"
-	ArweaveGateway = "permagate.io"
-	maxRetries     = 99999
-	baseDelay      = 0 * time.Second
+	ArweaveGateway = "arweave.net"
+	//ArweaveGateway = "permagate.io"
+	maxRetries = 99999
+	baseDelay  = 0 * time.Second
 )
 
 type ArDriveEntity struct {
