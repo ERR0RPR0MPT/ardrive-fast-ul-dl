@@ -49,7 +49,7 @@ func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID, arGate str
 func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
 	//retryDelay := baseDelay
 	log.Println("Processing folder:", folderID)
-	entities, err := listFolder(folderID)
+	entities, err := ListFolder(folderID)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func extractBetweenBraces(s string) string {
 	return s[start : end+1]
 }
 
-func listFolder(parentFolderID string) ([]ArDriveEntity, error) {
+func ListFolder(parentFolderID string) ([]ArDriveEntity, error) {
 	sArr := []string{"list-folder", "--parent-folder-id", parentFolderID}
 	cmd := exec.Command("ardrive", sArr...)
 	output, err := cmd.CombinedOutput()

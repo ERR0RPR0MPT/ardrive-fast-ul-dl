@@ -20,19 +20,33 @@ const (
 	fivePointOneGigabyte    = oneGigabyte*5 + oneGigabyte/10 // 5.1 GB
 	defaultChunkSize        = 97 * 1024
 	defaultMaxFolderNum     = 74
-	defaultFileInfoJsonName = "fileInfo.json"
+	DefaultFileInfoJsonName = "fileInfo.json"
 )
 
 type FileInfoManifest struct {
 	DataShards   int    `json:"data_shards"`
 	ParityShards int    `json:"parity_shards"`
 	ChunkSize    int    `json:"chunk_size"`
+	IndexLength  int    `json:"index_length"`
 	OriginalSize int64  `json:"original_size"`
 	Filename     string `json:"filename"`
 	MIMETypes    string `json:"mime_types"`
 }
 
-func getShardNumber(path string) int {
+func CheckShardNumber(path string) (bool, int) {
+	base := filepath.Base(path)
+	if !strings.HasSuffix(base, ".bin") {
+		return false, 0
+	}
+	numStr := strings.TrimSuffix(base, ".bin")
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		return false, 0
+	}
+	return true, num
+}
+
+func GetShardNumber(path string) int {
 	base := filepath.Base(path)
 	numStr := strings.TrimSuffix(base, ".bin")
 	num, _ := strconv.Atoi(numStr)
@@ -119,6 +133,7 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 	group := 0
 	buffer := make([]byte, dataShards*chunkSize)
 
+	indexLength := 0
 	for {
 		n, err := io.ReadFull(file, buffer)
 		if err != nil && err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
@@ -153,6 +168,7 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		// Calculate directory name
 		startNum := group*totalShards + 1
 		endNum := (group + 1) * totalShards
+		indexLength = endNum
 		subDir := fmt.Sprintf("%d-%d", startNum, endNum)
 		dirPath := filepath.Join(outputDir, subDir)
 		if err := os.MkdirAll(dirPath, 0755); err != nil {
@@ -179,6 +195,7 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		DataShards:   dataShards,
 		ParityShards: parityShards,
 		ChunkSize:    chunkSize,
+		IndexLength:  indexLength,
 		OriginalSize: originalSize,
 		Filename:     filepath.Base(inputFile),
 		MIMETypes:    getMimeType(inputFile),
@@ -189,11 +206,11 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(outputDir, defaultFileInfoJsonName), manifestData, 0644)
+	return os.WriteFile(filepath.Join(outputDir, DefaultFileInfoJsonName), manifestData, 0644)
 }
 
 func RSSplitterDecode(inputDir, outputFile string) error {
-	manifestData, err := os.ReadFile(filepath.Join(inputDir, defaultFileInfoJsonName))
+	manifestData, err := os.ReadFile(filepath.Join(inputDir, DefaultFileInfoJsonName))
 	if err != nil {
 		return err
 	}
@@ -228,14 +245,14 @@ func RSSplitterDecode(inputDir, outputFile string) error {
 			return err
 		}
 		if !info.IsDir() && strings.HasSuffix(path, ".bin") {
-			shardFiles[getShardNumber(path)] = path
+			shardFiles[GetShardNumber(path)] = path
 		}
 		return nil
 	})
 
 	//// Sort shards by number
 	//sort.Slice(shardFiles, func(i, j int) bool {
-	//	return getShardNumber(shardFiles[i]) < getShardNumber(shardFiles[j])
+	//	return GetShardNumber(shardFiles[i]) < GetShardNumber(shardFiles[j])
 	//})
 
 	outFile, err := os.Create(outputFile)
@@ -259,7 +276,7 @@ func RSSplitterDecode(inputDir, outputFile string) error {
 			if path == "" {
 				continue
 			}
-			num := getShardNumber(path)
+			num := GetShardNumber(path)
 			groupIndex := (num - 1) % totalShards
 			data, err := os.ReadFile(path)
 			if err != nil {
