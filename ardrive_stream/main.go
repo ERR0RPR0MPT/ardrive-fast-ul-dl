@@ -147,44 +147,48 @@ type fetchResult struct {
 	err        error
 }
 
-// 同步拉取数据
-//func streamData(w io.Writer, meta *FileMeta, start, end int64) error {
-//	blockSize := int64(meta.DataShards * meta.ChunkSize)
-//
-//	current := start
-//	for current <= end {
-//		blockIndex := current / blockSize
-//		blockStart := blockIndex * blockSize
-//		blockEnd := blockStart + blockSize - 1
-//		if blockEnd > meta.OriginalSize-1 {
-//			blockEnd = meta.OriginalSize - 1
-//		}
-//
-//		readStart := max(current, blockStart)
-//		readEnd := min(end, blockEnd)
-//
-//		// Synchronously fetch the block
-//		data, err := fetchBlock(context.Background(), meta, blockIndex)
-//		if err != nil {
-//			return err
-//		}
-//
-//		blockOffset := readStart - blockStart
-//		length := readEnd - readStart + 1
-//		if _, err := w.Write(data[blockOffset : blockOffset+length]); err != nil {
-//			return err
-//		}
-//
-//		current = readEnd + 1
-//	}
-//
-//	return nil
-//}
-
 func streamData(w io.Writer, meta *FileMeta, start, end int64) error {
+	return streamDataMulti(w, meta, start, end)
+}
+
+func streamDataSync(w io.Writer, meta *FileMeta, start, end int64) error {
+	blockSize := int64(meta.DataShards * meta.ChunkSize)
+
+	current := start
+	for current <= end {
+		blockIndex := current / blockSize
+		blockStart := blockIndex * blockSize
+		blockEnd := blockStart + blockSize - 1
+		if blockEnd > meta.OriginalSize-1 {
+			blockEnd = meta.OriginalSize - 1
+		}
+
+		readStart := max(current, blockStart)
+		readEnd := min(end, blockEnd)
+
+		// Synchronously fetch the block
+		data, err := fetchBlock(context.Background(), meta, blockIndex)
+		if err != nil {
+			return err
+		}
+
+		blockOffset := readStart - blockStart
+		length := readEnd - readStart + 1
+		if _, err := w.Write(data[blockOffset : blockOffset+length]); err != nil {
+			return err
+		}
+
+		current = readEnd + 1
+	}
+
+	return nil
+}
+
+func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64) error {
 	blockSize := meta.DataShards * meta.ChunkSize
 	startBlockIndex := start / int64(blockSize)
 	endBlockIndex := end / int64(blockSize)
+	sem := make(chan struct{}, maxConcurrency)
 
 	resultChan := make(chan fetchResult)
 	writeErrChan := make(chan error, 1)
@@ -251,6 +255,9 @@ func streamData(w io.Writer, meta *FileMeta, start, end int64) error {
 		wg.Add(1)
 		go func(bIndex int64) {
 			defer wg.Done()
+			sem <- struct{}{}        // 获取信号量
+			defer func() { <-sem }() // 释放信号量
+
 			data, err := fetchBlock(context.Background(), meta, bIndex)
 			if err != nil {
 				resultChan <- fetchResult{blockIndex: bIndex, err: err}
