@@ -7,6 +7,7 @@ import (
 	"github.com/klauspost/reedsolomon"
 	"io"
 	"math"
+	"mime"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,15 @@ const (
 	defaultFileInfoJsonName = "fileInfo.json"
 )
 
+type FileInfoManifest struct {
+	DataShards   int    `json:"data_shards"`
+	ParityShards int    `json:"parity_shards"`
+	ChunkSize    int    `json:"chunk_size"`
+	OriginalSize int64  `json:"original_size"`
+	Filename     string `json:"filename"`
+	MIMETypes    string `json:"mime_types"`
+}
+
 func getShardNumber(path string) int {
 	base := filepath.Base(path)
 	numStr := strings.TrimSuffix(base, ".bin")
@@ -34,6 +44,18 @@ func getMin(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// getMimeType 根据文件名返回 MIME 类型
+func getMimeType(fileName string) string {
+	// 获取文件扩展名
+	ext := filepath.Ext(fileName)
+	// 根据扩展名查找 MIME 类型
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		return "application/octet-stream" // 默认类型
+	}
+	return mimeType
 }
 
 func GetDefaultShardsNum(filePath string) (int, int, int, error) {
@@ -153,11 +175,13 @@ func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chu
 		}
 	}
 
-	manifest := map[string]interface{}{
-		"data_shards":   dataShards,
-		"parity_shards": parityShards,
-		"chunk_size":    chunkSize,
-		"original_size": originalSize,
+	manifest := FileInfoManifest{
+		DataShards:   dataShards,
+		ParityShards: parityShards,
+		ChunkSize:    chunkSize,
+		OriginalSize: originalSize,
+		Filename:     filepath.Base(inputFile),
+		MIMETypes:    getMimeType(inputFile),
 	}
 
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
@@ -174,12 +198,7 @@ func RSSplitterDecode(inputDir, outputFile string) error {
 		return err
 	}
 
-	var manifest struct {
-		DataShards   int   `json:"data_shards"`
-		ParityShards int   `json:"parity_shards"`
-		ChunkSize    int   `json:"chunk_size"`
-		OriginalSize int64 `json:"original_size"`
-	}
+	var manifest FileInfoManifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return err
 	}
@@ -187,11 +206,15 @@ func RSSplitterDecode(inputDir, outputFile string) error {
 	parityShards := manifest.ParityShards
 	totalShards := dataShards + parityShards
 	allShardsNum := CalculateShards(manifest.OriginalSize, manifest.ChunkSize, dataShards, parityShards)
+	filename := manifest.Filename
+	MIMETypes := manifest.MIMETypes
 
 	fmt.Println("dataShards:", dataShards)
 	fmt.Println("parityShards:", parityShards)
 	fmt.Println("totalShards:", totalShards)
 	fmt.Println("allShardsNum:", allShardsNum)
+	fmt.Println("filename:", filename)
+	fmt.Println("MIMETypes:", MIMETypes)
 
 	encoder, err := reedsolomon.New(manifest.DataShards, manifest.ParityShards)
 	if err != nil {
