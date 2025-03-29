@@ -104,6 +104,85 @@ func CalculateShards(originalSize int64, chunkSize, dataShards, parityShards int
 	return int(allShardsNum) + 1
 }
 
+// RSSplitterEncodeDir encodes all files in the input directory
+func RSSplitterEncodeDir(inputDir, outputDir string) error {
+	return filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			// Get the relative path for output
+			relPath, _ := filepath.Rel(inputDir, path)
+			outputFile := filepath.Join(outputDir, relPath)
+
+			// Create the output directory if it doesn't exist
+			if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
+				return fmt.Errorf("failed to create directory: %v", err)
+			}
+
+			dataShards, parityShards, chunkSize, err := GetDefaultShardsNum(path)
+			if err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
+
+			// Encode the file
+			fmt.Println("dataShards:", dataShards)
+			fmt.Println("parityShards:", parityShards)
+			fmt.Println("chunkSize:", chunkSize)
+			outputFile = filepath.Join(filepath.Dir(outputFile), strings.ReplaceAll(filepath.Base(outputFile), ".", "-"))
+			fmt.Println("Encode:", path, "->", outputFile)
+			if err := RSSplitterEncode(path, outputFile, dataShards, parityShards, chunkSize); err != nil {
+				return fmt.Errorf("error encoding file %s: %v", path, err)
+			}
+		}
+		return nil
+	})
+}
+
+func RSSplitterDecodeDir(inputDir, outputDir string) error {
+	return filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			manifestPath := filepath.Join(path, DefaultFileInfoJsonName)
+			if _, err := os.Stat(manifestPath); err == nil {
+				// 读取fileInfo.json
+				manifestData, err := os.ReadFile(manifestPath)
+				if err != nil {
+					return fmt.Errorf("error reading manifest in %s: %v", path, err)
+				}
+				var manifest FileInfoManifest
+				if err := json.Unmarshal(manifestData, &manifest); err != nil {
+					return fmt.Errorf("error parsing manifest in %s: %v", path, err)
+				}
+
+				// 构造输出文件路径
+				relPath, err := filepath.Rel(inputDir, path)
+				if err != nil {
+					return fmt.Errorf("error getting relative path for %s: %v", path, err)
+				}
+				parentRelPath := filepath.Dir(relPath)
+				outputParentDir := filepath.Join(outputDir, parentRelPath)
+				outputFilePath := filepath.Join(outputParentDir, manifest.Filename)
+
+				// 创建输出目录
+				if err := os.MkdirAll(outputParentDir, 0755); err != nil {
+					return fmt.Errorf("error creating output directory %s: %v", outputParentDir, err)
+				}
+
+				// 解码该目录
+				fmt.Printf("Decoding: %s -> %s\n", path, outputFilePath)
+				if err := RSSplitterDecode(path, outputFilePath); err != nil {
+					return fmt.Errorf("error decoding %s: %v", path, err)
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func RSSplitterEncode(inputFile, outputDir string, dataShards, parityShards, chunkSize int) error {
 	totalShards := dataShards + parityShards
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
