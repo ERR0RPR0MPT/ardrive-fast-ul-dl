@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	go ardrive_stream.CacheCleaner()
+	ardrive_stream.CacheInit("")
 
 	r := gin.Default()
 	r.GET("/ardrive/file/:folderId", ardrive_stream.HandleFileRequest)

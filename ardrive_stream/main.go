@@ -17,32 +17,33 @@ import (
 )
 
 const (
-	ArweaveGateway = "arweave.net"
-	maxRetries     = 9999999
-	maxConcurrency = 64
-	rangePrefix    = "bytes="
-	cacheTTL       = 60 * time.Minute
+	DefaultCachePath = "./cache"
+	FileMetaName     = "fileMeta.json"
+	ArweaveGateway   = "arweave.net"
+	maxRetries       = 9999999
+	maxConcurrency   = 64
+	rangePrefix      = "bytes="
+	cacheTTL         = 60 * time.Minute
 	//shardIDPrefixLen = 5 // 00001.bin
 )
 
 type FileMeta struct {
-	DataShards   int
-	ParityShards int
-	ChunkSize    int
-	OriginalSize int64
-	Filename     string
-	MIMEType     string
-	ShardMap     map[int]ardrive_fast_dl.ArDriveEntity
-	LastAccessed time.Time
+	DataShards   int                                   `json:"data_shards"`
+	ParityShards int                                   `json:"parity_shards"`
+	ChunkSize    int                                   `json:"chunk_size"`
+	OriginalSize int64                                 `json:"original_size"`
+	Filename     string                                `json:"filename"`
+	MIMEType     string                                `json:"mime_type"`
+	ShardMap     map[int]ardrive_fast_dl.ArDriveEntity `json:"shard_map"`
 }
 
 type CachedMeta struct {
-	meta       *FileMeta
-	expiration time.Time
+	Meta       *FileMeta `json:"meta"`
+	Expiration time.Time `json:"expiration"`
 }
 
 var (
-	fileCache sync.Map
+	fileCache map[string]CachedMeta
 	cacheLock sync.Mutex
 	client    = &http.Client{
 		Transport: &http.Transport{
@@ -53,7 +54,7 @@ var (
 )
 
 func HandleFileRequest(c *gin.Context) {
-	folderID := c.Param("folderId")
+	folderId := c.Param("folderId")
 
 	// Handle range request
 	rangeHeader := c.GetHeader("Range")
@@ -63,7 +64,7 @@ func HandleFileRequest(c *gin.Context) {
 		log.Println("send partial content:", rangeHeader)
 	}
 
-	meta, err := getFileMeta(folderID)
+	meta, err := getFileMeta(folderId)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -74,7 +75,6 @@ func HandleFileRequest(c *gin.Context) {
 	log.Println("ChunkSize:", meta.ChunkSize)
 	log.Println("OriginalSize:", meta.OriginalSize)
 	log.Println("MIMEType:", meta.MIMEType)
-	log.Println("LastAccessed:", meta.LastAccessed)
 
 	// Set response headers
 	c.Header("Content-Type", meta.MIMEType)
@@ -84,7 +84,7 @@ func HandleFileRequest(c *gin.Context) {
 	// Handle range request
 	rangeHeader = c.GetHeader("Range")
 	if rangeHeader == "" {
-		sendFullFile(c, meta)
+		sendFullFile(c, meta, folderId)
 		return
 	}
 
@@ -94,10 +94,10 @@ func HandleFileRequest(c *gin.Context) {
 		return
 	}
 
-	sendPartialContent(c, meta, start, end)
+	sendPartialContent(c, meta, start, end, folderId)
 }
 
-func sendFullFile(c *gin.Context, meta *FileMeta) {
+func sendFullFile(c *gin.Context, meta *FileMeta, folderId string) {
 	c.Header("Content-Length", strconv.FormatInt(meta.OriginalSize, 10))
 
 	// Create pipe for streaming
@@ -106,7 +106,7 @@ func sendFullFile(c *gin.Context, meta *FileMeta) {
 
 	go func() {
 		defer pw.Close()
-		if err := streamData(pw, meta, 0, meta.OriginalSize-1); err != nil {
+		if err := streamData(pw, meta, 0, meta.OriginalSize-1, folderId); err != nil {
 			log.Printf("Stream error: %v", err)
 		}
 	}()
@@ -117,7 +117,7 @@ func sendFullFile(c *gin.Context, meta *FileMeta) {
 	})
 }
 
-func sendPartialContent(c *gin.Context, meta *FileMeta, start, end int64) {
+func sendPartialContent(c *gin.Context, meta *FileMeta, start, end int64, folderId string) {
 	log.Println("sendPartialContent:", start, end)
 	contentLength := end - start + 1
 	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
@@ -130,7 +130,7 @@ func sendPartialContent(c *gin.Context, meta *FileMeta, start, end int64) {
 
 	go func() {
 		defer pw.Close()
-		if err := streamData(pw, meta, start, end); err != nil {
+		if err := streamData(pw, meta, start, end, folderId); err != nil {
 			log.Printf("Stream error: %v", err)
 		}
 	}()
@@ -147,11 +147,11 @@ type fetchResult struct {
 	err        error
 }
 
-func streamData(w io.Writer, meta *FileMeta, start, end int64) error {
-	return streamDataMulti(w, meta, start, end)
+func streamData(w io.Writer, meta *FileMeta, start, end int64, folderId string) error {
+	return streamDataMulti(w, meta, start, end, folderId)
 }
 
-func streamDataSync(w io.Writer, meta *FileMeta, start, end int64) error {
+func streamDataSync(w io.Writer, meta *FileMeta, start, end int64, folderId string) error {
 	blockSize := int64(meta.DataShards * meta.ChunkSize)
 
 	current := start
@@ -167,7 +167,7 @@ func streamDataSync(w io.Writer, meta *FileMeta, start, end int64) error {
 		readEnd := min(end, blockEnd)
 
 		// Synchronously fetch the block
-		data, err := fetchBlock(context.Background(), meta, blockIndex)
+		data, err := fetchBlock(context.Background(), meta, blockIndex, folderId)
 		if err != nil {
 			return err
 		}
@@ -184,7 +184,7 @@ func streamDataSync(w io.Writer, meta *FileMeta, start, end int64) error {
 	return nil
 }
 
-func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64) error {
+func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64, folderId string) error {
 	blockSize := meta.DataShards * meta.ChunkSize
 	startBlockIndex := start / int64(blockSize)
 	endBlockIndex := end / int64(blockSize)
@@ -258,7 +258,7 @@ func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64) error {
 			sem <- struct{}{}        // 获取信号量
 			defer func() { <-sem }() // 释放信号量
 
-			data, err := fetchBlock(context.Background(), meta, bIndex)
+			data, err := fetchBlock(context.Background(), meta, bIndex, folderId)
 			if err != nil {
 				resultChan <- fetchResult{blockIndex: bIndex, err: err}
 				return
@@ -302,7 +302,7 @@ func writeBlock(w io.Writer, meta *FileMeta, start, end, blockIndex int64, data 
 	return nil
 }
 
-func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64) ([]byte, error) {
+func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64, folderId string) ([]byte, error) {
 	log.Println("fetchBlock:", "blockIndex:", blockIndex)
 
 	shardStart := 1 + blockIndex*int64(meta.DataShards+meta.ParityShards)
@@ -327,10 +327,20 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64) ([]byte, 
 				return
 			}
 
-			data, err := downloadWithRetry(ctx, dataTxID.DataTxId)
+			// 检查是否缓存
+			cachedFile := dataTxID.Name
+			data, err := ReadCacheFolderBinData(folderId, cachedFile)
 			if err != nil {
-				resultChan <- result{err: err}
-				return
+				data, err = downloadWithRetry(ctx, dataTxID.DataTxId)
+				if err != nil {
+					resultChan <- result{err: err}
+					return
+				}
+
+				// 缓存 block 数据
+				SaveCacheFolderBinData(folderId, cachedFile, data)
+			} else {
+				log.Println("hit cache:", folderId, cachedFile)
 			}
 
 			resultChan <- result{
@@ -365,9 +375,42 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64) ([]byte, 
 	return blockResult, nil
 }
 
+//func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
+//	for attempt := 1; ; attempt++ {
+//		req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID), nil)
+//		resp, err := client.Do(req)
+//		if err == nil && resp.StatusCode == http.StatusOK {
+//			data, err := io.ReadAll(resp.Body)
+//			resp.Body.Close()
+//			return data, err
+//		}
+//		if resp != nil {
+//			resp.Body.Close()
+//		}
+//
+//		if attempt >= maxRetries {
+//			return nil, fmt.Errorf("max retries reached for %s", dataTxID)
+//		}
+//
+//		select {
+//		case <-ctx.Done():
+//			return nil, ctx.Err()
+//		case <-time.After(time.Duration(attempt) * time.Second):
+//		}
+//	}
+//}
+
 func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
+	// 设置访问超时
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	for attempt := 1; ; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID), nil)
+		if err != nil {
+			return nil, err
+		}
+
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			data, err := io.ReadAll(resp.Body)
@@ -423,33 +466,35 @@ func parseRange(rangeHeader string, fileSize int64) (int64, int64, error) {
 	return start, end, nil
 }
 
-func getFileMeta(folderID string) (*FileMeta, error) {
-	cacheLock.Lock()
-	defer cacheLock.Unlock()
-
-	if cached, ok := fileCache.Load(folderID); ok {
-		cm := cached.(CachedMeta)
-		if time.Now().Before(cm.expiration) {
-			return cm.meta, nil
+func getFileMeta(folderId string) (*FileMeta, error) {
+	//cacheLock.Lock()
+	cached, ok := fileCache[folderId]
+	//cacheLock.Unlock()
+	if ok {
+		if time.Now().Before(cached.Expiration) {
+			log.Println("hit cache: file meta")
+			return cached.Meta, nil
 		}
 	}
 
-	meta, err := fetchFileMeta(folderID)
+	meta, err := fetchFileMeta(folderId)
 	if err != nil {
 		return nil, err
 	}
 
-	fileCache.Store(folderID, CachedMeta{
-		meta:       meta,
-		expiration: time.Now().Add(cacheTTL),
-	})
+	cacheLock.Lock()
+	fileCache[folderId] = CachedMeta{
+		Meta:       meta,
+		Expiration: time.Now().Add(cacheTTL),
+	}
+	cacheLock.Unlock()
 
 	return meta, nil
 }
 
-func fetchFileMeta(folderID string) (*FileMeta, error) {
+func fetchFileMeta(folderId string) (*FileMeta, error) {
 	// 1. Collect data shards
-	shardMap, shardSlice, err := collectAllShards(folderID)
+	shardMap, shardSlice, err := collectAllShards(folderId)
 	if err != nil {
 		return nil, err
 	}
@@ -460,8 +505,8 @@ func fetchFileMeta(folderID string) (*FileMeta, error) {
 		return nil, err
 	}
 
-	// 2. Parse manifest
-	manifest, err := downloadManifest(fileInfo.DataTxId)
+	// 3. Parse manifest
+	manifest, err := downloadManifest(fileInfo.DataTxId, folderId)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +537,13 @@ func findFileInfo(entities []ardrive_fast_dl.ArDriveEntity) (*ardrive_fast_dl.Ar
 	return ade, nil
 }
 
-func downloadManifest(dataTxID string) (*rs_splitter.FileInfoManifest, error) {
+func downloadManifest(dataTxID, folderId string) (*rs_splitter.FileInfoManifest, error) {
+	// check cache
+	cacheFileInfo, err := ReadCacheFolderFileInfoData(folderId)
+	if err == nil {
+		return &cacheFileInfo, nil
+	}
+
 	resp, err := client.Get(fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID))
 	if err != nil {
 		return nil, err
@@ -504,10 +555,16 @@ func downloadManifest(dataTxID string) (*rs_splitter.FileInfoManifest, error) {
 		return nil, err
 	}
 
+	// set cache
+	SaveCacheFolderFileInfoData(folderId, manifest)
+	if err != nil {
+		return nil, err
+	}
+
 	return &manifest, nil
 }
 
-func collectAllShards(folderID string) (map[int]ardrive_fast_dl.ArDriveEntity, []ardrive_fast_dl.ArDriveEntity, error) {
+func collectAllShards(folderId string) (map[int]ardrive_fast_dl.ArDriveEntity, []ardrive_fast_dl.ArDriveEntity, error) {
 	tasks := make(chan ardrive_fast_dl.ArDriveEntity, 9999)
 	processErrCh := make(chan error, 1)
 	var wg sync.WaitGroup
@@ -516,7 +573,7 @@ func collectAllShards(folderID string) (map[int]ardrive_fast_dl.ArDriveEntity, [
 
 	// Start add goroutines
 	wg.Add(1)
-	go func(tasks <-chan ardrive_fast_dl.ArDriveEntity, wg *sync.WaitGroup, folderID string) {
+	go func(tasks <-chan ardrive_fast_dl.ArDriveEntity, wg *sync.WaitGroup, folderId string) {
 		defer wg.Done()
 		for file := range tasks {
 			resultSlice = append(resultSlice, file)
@@ -527,12 +584,12 @@ func collectAllShards(folderID string) (map[int]ardrive_fast_dl.ArDriveEntity, [
 			}
 			resultMap[indexShard] = file
 		}
-	}(tasks, &wg, folderID)
+	}(tasks, &wg, folderId)
 
 	// Process folders and handle errors
 	go func() {
 		defer close(tasks)
-		processErrCh <- ardrive_fast_dl.ProcessFolderRecursive(folderID, tasks)
+		processErrCh <- ardrive_fast_dl.ProcessFolderRecursive(folderId, tasks)
 	}()
 
 	// Wait for folder processing to complete and get error
@@ -546,20 +603,4 @@ func collectAllShards(folderID string) (map[int]ardrive_fast_dl.ArDriveEntity, [
 	}
 
 	return resultMap, resultSlice, nil
-}
-
-func CacheCleaner() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		fileCache.Range(func(key, value interface{}) bool {
-			cm := value.(CachedMeta)
-			if time.Now().After(cm.expiration) {
-				fileCache.Delete(key)
-			}
-			return true
-		})
-	}
 }

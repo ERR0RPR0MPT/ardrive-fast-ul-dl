@@ -15,9 +15,6 @@ import (
 )
 
 const (
-	oneGigabyte             = 1 << 30                        // 1 GB = 2^30 bytes
-	oneTenthGigabyte        = oneGigabyte / 10               // 0.1 GB
-	fivePointOneGigabyte    = oneGigabyte*5 + oneGigabyte/10 // 5.1 GB
 	defaultChunkSize        = 97 * 1024
 	defaultMaxFolderNum     = 74
 	DefaultFileInfoJsonName = "fileInfo.json"
