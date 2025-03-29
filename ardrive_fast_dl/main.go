@@ -46,7 +46,7 @@ func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID, arGate str
 	}
 }
 
-func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
+func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity, multi bool) error {
 	//retryDelay := baseDelay
 	log.Println("Processing folder:", folderID)
 	entities, err := ListFolder(folderID)
@@ -59,10 +59,10 @@ func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
 	for _, entity := range entities {
 		entity := entity // Capture loop variable
 		if entity.EntityType == "folder" {
-			g.Go(func() error {
+			t := func() error {
 				retryDelay := baseDelay
 				for i := 0; i < maxRetries; i++ {
-					err := ProcessFolderRecursive(entity.EntityId, tasks)
+					err := ProcessFolderRecursive(entity.EntityId, tasks, multi)
 					if err == nil {
 						return nil
 					}
@@ -73,7 +73,12 @@ func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
 					}
 				}
 				return fmt.Errorf("failed to process subfolder %s after %d attempts", entity.EntityId, maxRetries)
-			})
+			}
+			if multi {
+				g.Go(t)
+			} else {
+				t()
+			}
 		} else {
 			select {
 			case tasks <- entity:
@@ -189,7 +194,7 @@ func FastDL(threads int, folderID, arGate string) error {
 	// Process folders and handle errors
 	go func() {
 		defer close(tasks)
-		processErrCh <- ProcessFolderRecursive(folderID, tasks)
+		processErrCh <- ProcessFolderRecursive(folderID, tasks, true)
 	}()
 
 	// Wait for folder processing to complete and get error

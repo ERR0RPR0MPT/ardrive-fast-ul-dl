@@ -647,7 +647,7 @@ func collectAllShards(folderId string) (map[int]ardrive_fast_dl.ArDriveEntity, [
 	// Process folders and handle errors
 	go func() {
 		defer close(tasks)
-		processErrCh <- ardrive_fast_dl.ProcessFolderRecursive(folderId, tasks)
+		processErrCh <- ardrive_fast_dl.ProcessFolderRecursive(folderId, tasks, C.MultiProcessFolder)
 	}()
 
 	// Wait for folder processing to complete and get error
