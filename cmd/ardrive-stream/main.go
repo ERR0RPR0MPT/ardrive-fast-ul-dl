@@ -1,15 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"github.com/ERR0RPR0MPT/ardrive-fast-ul-dl/ardrive_stream"
-	"github.com/gin-gonic/gin"
-	"log"
 )
 
 func main() {
+	if err := ardrive_stream.ConfigInit(); err != nil {
+		fmt.Println("Error initializing config:", err)
+		return
+	}
 	ardrive_stream.CacheInit("")
-
-	r := gin.Default()
-	r.GET("/ardrive/file/:folderId", ardrive_stream.HandleFileRequest)
-	log.Fatal(r.Run(":8080"))
+	ardrive_stream.RunServer()
 }

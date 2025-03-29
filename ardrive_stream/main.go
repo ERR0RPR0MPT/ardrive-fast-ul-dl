@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	DefaultCachePath = "./cache"
-	FileMetaName     = "fileMeta.json"
-	ArweaveGateway   = "arweave.net"
-	maxRetries       = 9999999
-	maxConcurrency   = 64
-	rangePrefix      = "bytes="
-	cacheTTL         = 60 * time.Minute
-	//shardIDPrefixLen = 5 // 00001.bin
+	DefaultCachePath  = "./cache"
+	DefaultConfigName = "config.json"
+	FileMetaName      = "fileMeta.json"
+	ArweaveGateway    = "arweave.net"
+	maxRetries        = 9999999
+	maxConcurrency    = 64
+	rangePrefix       = "bytes="
+	cacheTTL          = 60 * time.Minute
 )
 
 type FileMeta struct {
@@ -47,11 +47,17 @@ var (
 	cacheLock sync.Mutex
 	client    = &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: maxConcurrency,
+			MaxIdleConnsPerHost: C.MaxConcurrency,
 		},
-		Timeout: 30 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 )
+
+func RunServer() {
+	r := gin.Default()
+	r.GET("/ardrive/file/:folderId", HandleFileRequest)
+	log.Fatal(r.Run(C.Host + ":" + strconv.Itoa(C.Port)))
+}
 
 func HandleFileRequest(c *gin.Context) {
 	folderId := c.Param("folderId")
@@ -188,7 +194,7 @@ func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64, folderId str
 	blockSize := meta.DataShards * meta.ChunkSize
 	startBlockIndex := start / int64(blockSize)
 	endBlockIndex := end / int64(blockSize)
-	sem := make(chan struct{}, maxConcurrency)
+	sem := make(chan struct{}, C.MaxConcurrency)
 
 	resultChan := make(chan fetchResult)
 	writeErrChan := make(chan error, 1)
@@ -406,7 +412,8 @@ func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
 	defer cancel()
 
 	for attempt := 1; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("https://%s/%s", randomStringFromSlice(C.ArweaveGateway), dataTxID), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -421,7 +428,7 @@ func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
 			resp.Body.Close()
 		}
 
-		if attempt >= maxRetries {
+		if attempt >= C.MaxRetries {
 			return nil, fmt.Errorf("max retries reached for %s", dataTxID)
 		}
 
@@ -485,7 +492,7 @@ func getFileMeta(folderId string) (*FileMeta, error) {
 	cacheLock.Lock()
 	fileCache[folderId] = CachedMeta{
 		Meta:       meta,
-		Expiration: time.Now().Add(cacheTTL),
+		Expiration: time.Now().Add(time.Duration(C.CacheTTL) * time.Minute),
 	}
 	cacheLock.Unlock()
 
@@ -544,7 +551,7 @@ func downloadManifest(dataTxID, folderId string) (*rs_splitter.FileInfoManifest,
 		return &cacheFileInfo, nil
 	}
 
-	resp, err := client.Get(fmt.Sprintf("https://%s/%s", ArweaveGateway, dataTxID))
+	resp, err := client.Get(fmt.Sprintf("https://%s/%s", randomStringFromSlice(C.ArweaveGateway), dataTxID))
 	if err != nil {
 		return nil, err
 	}

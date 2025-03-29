@@ -1,0 +1,12 @@
+{
+  "host": "",
+  "port": 12888,
+  "cache-path": "./cache",
+  "file-meta-name": "fileMeta.json",
+  "arweave-gateway": [
+    "arweave.net"
+  ],
+  "max-retries": 99999999,
+  "max-concurrency": 64,
+  "cache-ttl": 43200
+}

@@ -19,7 +19,7 @@ func CacheInit(cacheDirPath string) {
 	GetCachePath()
 
 	// 读取缓存数据
-	cm, err := ReadCacheFileMeta(FileMetaName)
+	cm, err := ReadCacheFileMeta(C.FileMetaName)
 	if err != nil {
 		log.Fatalf("cache init error: %v", err)
 	}
@@ -33,7 +33,11 @@ func CacheInit(cacheDirPath string) {
 
 func GetCachePath() (string, error) {
 	if CachePath == "" {
-		CachePath = DefaultCachePath
+		if C.CachePath == "" {
+			CachePath = DefaultCachePath
+		} else {
+			CachePath = C.CachePath
+		}
 	}
 	if _, err := os.Stat(CachePath); os.IsNotExist(err) {
 		err := os.MkdirAll(CachePath, 0755)
@@ -58,8 +62,8 @@ func GetCacheFolderPath(folderId string) (string, error) {
 }
 
 func ReadCacheFileMeta(fileMetaName string) (map[string]CachedMeta, error) {
-	if fileMetaName == "" {
-		fileMetaName = FileMetaName
+	if C.FileMetaName == "" {
+		C.FileMetaName = FileMetaName
 	}
 	d, err := GetCachePath()
 	if err != nil {
@@ -190,8 +194,8 @@ func ReadCacheFolderBinData(folderId string, index string) ([]byte, error) {
 }
 
 func SaveCacheFileMeta(cachedMeta map[string]CachedMeta, fileMetaName string) error {
-	if fileMetaName == "" {
-		fileMetaName = FileMetaName // 默认文件名
+	if C.FileMetaName == "" {
+		C.FileMetaName = FileMetaName // 默认文件名
 	}
 
 	// 获取缓存路径
@@ -271,7 +275,7 @@ func CacheSaver() {
 	for {
 		<-ticker.C
 		//每10秒钟保存一次 CachedMeta 到 ./cache/fileMeta.json
-		if err := SaveCacheFileMeta(fileCache, FileMetaName); err != nil {
+		if err := SaveCacheFileMeta(fileCache, C.FileMetaName); err != nil {
 			// 处理错误，例如打印日志
 			fmt.Println("Error saving cache file meta:", err)
 		}
