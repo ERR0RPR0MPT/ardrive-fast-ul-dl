@@ -460,10 +460,6 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64, folderId 
 //}
 
 func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
-	//// 设置访问超时
-	//ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	//defer cancel()
-
 	for attempt := 1; ; attempt++ {
 		req, err := http.NewRequest("GET",
 			fmt.Sprintf("https://%s/%s", randomStringFromSlice(C.ArweaveGateway), dataTxID), nil)

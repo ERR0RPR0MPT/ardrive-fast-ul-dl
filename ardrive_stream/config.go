@@ -34,7 +34,7 @@ func ConfigInit() error {
 		MaxRetries:     99999999,
 		MaxConcurrency: 64,
 		CacheTTL:       1440,
-		Timeout:        10,
+		Timeout:        20,
 	}
 
 	// 检查命令行参数
