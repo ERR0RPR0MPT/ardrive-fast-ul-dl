@@ -36,7 +36,7 @@ func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID, arGate str
 	defer wg.Done()
 	for file := range tasks {
 		for {
-			err := downloadFile(file, folderID, arGate)
+			err := DownloadFile(file, folderID, arGate)
 			if err != nil {
 				log.Printf("Error downloading %s: %v\n", file.Name, err)
 				continue
@@ -46,7 +46,7 @@ func worker(tasks <-chan ArDriveEntity, wg *sync.WaitGroup, folderID, arGate str
 	}
 }
 
-func processFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
+func ProcessFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
 	//retryDelay := baseDelay
 	log.Println("Processing folder:", folderID)
 	entities, err := listFolder(folderID)
@@ -62,7 +62,7 @@ func processFolderRecursive(folderID string, tasks chan<- ArDriveEntity) error {
 			g.Go(func() error {
 				retryDelay := baseDelay
 				for i := 0; i < maxRetries; i++ {
-					err := processFolderRecursive(entity.EntityId, tasks)
+					err := ProcessFolderRecursive(entity.EntityId, tasks)
 					if err == nil {
 						return nil
 					}
@@ -130,7 +130,7 @@ func findIndex(name string, parts []string) (bool, int) {
 	return false, -1
 }
 
-func downloadFile(file ArDriveEntity, folderID, arGate string) error {
+func DownloadFile(file ArDriveEntity, folderID, arGate string) error {
 	cleanPath := strings.TrimPrefix(file.Path, "/")
 	pathParts := strings.Split(cleanPath, "/")
 
@@ -189,7 +189,7 @@ func FastDL(threads int, folderID, arGate string) error {
 	// Process folders and handle errors
 	go func() {
 		defer close(tasks)
-		processErrCh <- processFolderRecursive(folderID, tasks)
+		processErrCh <- ProcessFolderRecursive(folderID, tasks)
 	}()
 
 	// Wait for folder processing to complete and get error
