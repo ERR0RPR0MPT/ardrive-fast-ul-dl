@@ -10,6 +10,7 @@ import (
 var C Config
 
 type Config struct {
+	Debug          bool     `json:"debug"`
 	Host           string   `json:"host"`
 	Port           int      `json:"port"`
 	CachePath      string   `json:"cache-path"`
@@ -24,6 +25,7 @@ type Config struct {
 func ConfigInit() error {
 	// 默认配置
 	defaultConfig := Config{
+		Debug:          false,
 		Host:           "",
 		Port:           12888,
 		CachePath:      "./cache",
@@ -31,8 +33,8 @@ func ConfigInit() error {
 		ArweaveGateway: []string{"arweave.net"},
 		MaxRetries:     99999999,
 		MaxConcurrency: 64,
-		CacheTTL:       43200,
-		Timeout:        15,
+		CacheTTL:       1440,
+		Timeout:        10,
 	}
 
 	// 检查命令行参数

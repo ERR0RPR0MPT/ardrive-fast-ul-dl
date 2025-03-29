@@ -261,7 +261,10 @@ func CacheCleaner() {
 			if time.Now().After(cm.Expiration) {
 				DeleteCacheFolderData(folderId)
 				cacheLock.Lock()
-				delete(fileCache, folderId)
+				//delete(fileCache, folderId)
+				a := fileCache[folderId]
+				a.Expiration = time.Now().Add(time.Duration(C.CacheTTL) * time.Minute)
+				fileCache[folderId] = a
 				cacheLock.Unlock()
 			}
 		}

@@ -23,6 +23,7 @@ const (
 	ArweaveGateway    = "arweave.net"
 	maxRetries        = 9999999
 	maxConcurrency    = 64
+	defaultRangeSize  = 1024 * 1024 * 5
 	rangePrefix       = "bytes="
 	cacheTTL          = 60 * time.Minute
 )
@@ -49,12 +50,31 @@ var (
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: C.MaxConcurrency,
 		},
-		Timeout: 10 * time.Second,
+		Timeout: 0,
 	}
 )
 
+func Cors() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Allow-Methods", "*")
+		c.Header("Access-Control-Expose-Headers", "*")
+		c.Header("Access-Control-Allow-Credentials", "true")
+		//context.Header("Alt-svc", "h3=\":"+strconv.Itoa(port)+"\"; ma=8640000")
+		if method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+		}
+		c.Next()
+	}
+}
+
 func RunServer() {
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+	r.MaxMultipartMemory = 8 << 20
+	r.Use(Cors())
 	r.GET("/ardrive/file/:folderId", HandleFileRequest)
 	log.Fatal(r.Run(C.Host + ":" + strconv.Itoa(C.Port)))
 }
@@ -99,12 +119,28 @@ func HandleFileRequest(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
+	rangeSize := int64(defaultRangeSize)
+	realEnd := start + rangeSize
+	if realEnd > end {
+		realEnd = end
+	}
 
-	sendPartialContent(c, meta, start, end, folderId)
+	sendPartialContent(c, meta, start, realEnd, folderId)
 }
 
 func sendFullFile(c *gin.Context, meta *FileMeta, folderId string) {
 	c.Header("Content-Length", strconv.FormatInt(meta.OriginalSize, 10))
+
+	// 如果是视频就不返回内容
+	secFetchDestHeader := c.GetHeader("Sec-Fetch-Dest")
+	secFetchModeHeader := c.GetHeader("Sec-Fetch-Mode")
+	if secFetchDestHeader != "" {
+		log.Println("Sec-Fetch-Dest:", secFetchDestHeader)
+		log.Println("Sec-Fetch-Mode:", secFetchDestHeader)
+		if secFetchDestHeader == "document" && secFetchModeHeader == "navigate" {
+			return
+		}
+	}
 
 	// Create pipe for streaming
 	pr, pw := io.Pipe()
@@ -124,8 +160,8 @@ func sendFullFile(c *gin.Context, meta *FileMeta, folderId string) {
 }
 
 func sendPartialContent(c *gin.Context, meta *FileMeta, start, end int64, folderId string) {
-	log.Println("sendPartialContent:", start, end)
 	contentLength := end - start + 1
+	log.Println("sendPartialContent:", start, end)
 	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
 	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, meta.OriginalSize))
 	c.Status(http.StatusPartialContent)
@@ -136,6 +172,9 @@ func sendPartialContent(c *gin.Context, meta *FileMeta, start, end int64, folder
 
 	go func() {
 		defer pw.Close()
+		//if err := streamData(pw, meta, start, end, folderId); err != nil {
+		//	log.Printf("Stream error: %v", err)
+		//}
 		if err := streamData(pw, meta, start, end, folderId); err != nil {
 			log.Printf("Stream error: %v", err)
 		}
@@ -154,7 +193,8 @@ type fetchResult struct {
 }
 
 func streamData(w io.Writer, meta *FileMeta, start, end int64, folderId string) error {
-	return streamDataMulti(w, meta, start, end, folderId)
+	//return streamDataMulti(w, meta, start, end, folderId)
+	return streamDataSync(w, meta, start, end, folderId)
 }
 
 func streamDataSync(w io.Writer, meta *FileMeta, start, end int64, folderId string) error {
@@ -194,11 +234,11 @@ func streamDataMulti(w io.Writer, meta *FileMeta, start, end int64, folderId str
 	blockSize := meta.DataShards * meta.ChunkSize
 	startBlockIndex := start / int64(blockSize)
 	endBlockIndex := end / int64(blockSize)
-	sem := make(chan struct{}, C.MaxConcurrency)
 
 	resultChan := make(chan fetchResult)
 	writeErrChan := make(chan error, 1)
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, C.MaxConcurrency)
 
 	// 启动写入器协程
 	go func() {
@@ -320,12 +360,19 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64, folderId 
 		err   error
 	}
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, C.MaxConcurrency)
 	resultChan := make(chan result, meta.DataShards)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	for i := 0; i < meta.DataShards; i++ {
+		wg.Add(1)
 		go func(shardNum int) {
+			defer wg.Done()
+			sem <- struct{}{}        // 获取信号量
+			defer func() { <-sem }() // 释放信号量
+
 			shardID := int(shardStart) + shardNum
 			dataTxID, exists := meta.ShardMap[shardID]
 			if !exists {
@@ -345,8 +392,14 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64, folderId 
 
 				// 缓存 block 数据
 				SaveCacheFolderBinData(folderId, cachedFile, data)
+
+				if C.Debug {
+					log.Println("download ok:", folderId, cachedFile)
+				}
 			} else {
-				log.Println("hit cache:", folderId, cachedFile)
+				if C.Debug {
+					log.Println("hit cache:", folderId, cachedFile)
+				}
 			}
 
 			resultChan <- result{
@@ -407,12 +460,12 @@ func fetchBlock(ctx context.Context, meta *FileMeta, blockIndex int64, folderId 
 //}
 
 func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
-	// 设置访问超时
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	//// 设置访问超时
+	//ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	//defer cancel()
 
 	for attempt := 1; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "GET",
+		req, err := http.NewRequest("GET",
 			fmt.Sprintf("https://%s/%s", randomStringFromSlice(C.ArweaveGateway), dataTxID), nil)
 		if err != nil {
 			return nil, err
@@ -440,7 +493,7 @@ func downloadWithRetry(ctx context.Context, dataTxID string) ([]byte, error) {
 	}
 }
 
-func parseRange(rangeHeader string, fileSize int64) (int64, int64, error) {
+func parseRange(rangeHeader string, blockSize int64) (int64, int64, error) {
 	if !strings.HasPrefix(rangeHeader, rangePrefix) {
 		return 0, 0, fmt.Errorf("invalid range prefix")
 	}
@@ -458,7 +511,7 @@ func parseRange(rangeHeader string, fileSize int64) (int64, int64, error) {
 
 	var end int64
 	if parts[1] == "" {
-		end = fileSize - 1
+		end = blockSize - 1
 	} else {
 		end, err = strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
@@ -466,7 +519,7 @@ func parseRange(rangeHeader string, fileSize int64) (int64, int64, error) {
 		}
 	}
 
-	if start < 0 || end >= fileSize || start > end {
+	if start < 0 || end >= blockSize || start > end {
 		return 0, 0, fmt.Errorf("invalid range bounds")
 	}
 
@@ -478,10 +531,12 @@ func getFileMeta(folderId string) (*FileMeta, error) {
 	cached, ok := fileCache[folderId]
 	//cacheLock.Unlock()
 	if ok {
-		if time.Now().Before(cached.Expiration) {
-			log.Println("hit cache: file meta")
-			return cached.Meta, nil
-		}
+		//if time.Now().Before(cached.Expiration) {
+		//	log.Println("hit cache: file meta")
+		//	return cached.Meta, nil
+		//}
+		log.Println("hit cache: file meta")
+		return cached.Meta, nil
 	}
 
 	meta, err := fetchFileMeta(folderId)
