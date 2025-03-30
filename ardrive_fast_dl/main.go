@@ -181,7 +181,7 @@ func DownloadFile(file ArDriveEntity, folderID, arGate string) error {
 }
 
 func FastDL(threads int, folderID, arGate string) error {
-	tasks := make(chan ArDriveEntity, 9999)
+	tasks := make(chan ArDriveEntity, threads)
 	processErrCh := make(chan error, 1)
 	var wg sync.WaitGroup
 

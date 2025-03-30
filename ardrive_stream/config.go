@@ -34,7 +34,7 @@ func ConfigInit() error {
 		ArweaveGateway:     []string{"arweave.net"},
 		MaxRetries:         99999999,
 		MaxConcurrency:     64,
-		CacheTTL:           1440,
+		CacheTTL:           10,
 		Timeout:            20,
 		MultiProcessFolder: false,
 	}

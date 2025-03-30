@@ -623,7 +623,7 @@ func downloadManifest(dataTxID, folderId string) (*rs_splitter.FileInfoManifest,
 }
 
 func collectAllShards(folderId string) (map[int]ardrive_fast_dl.ArDriveEntity, []ardrive_fast_dl.ArDriveEntity, error) {
-	tasks := make(chan ardrive_fast_dl.ArDriveEntity, 9999)
+	tasks := make(chan ardrive_fast_dl.ArDriveEntity, C.MaxConcurrency)
 	processErrCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	resultMap := make(map[int]ardrive_fast_dl.ArDriveEntity)
