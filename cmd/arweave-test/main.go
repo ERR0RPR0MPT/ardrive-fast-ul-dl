@@ -142,15 +142,25 @@ func main() {
 	////输出原始对象
 	//fmt.Println(string(data))
 
-	name, err := arweave_api.CreateFolder(
-		"test",
-		"28d2b47e-38bc-4def-b03b-9a099f514b29",
-		"a39b2bf1-e15d-4b28-8c39-f01fee6177c0",
+	//name, err := arweave_api.ArDriveTurboCreateFolder(
+	//	"test",
+	//	"28d2b47e-38bc-4def-b03b-9a099f514b29",
+	//	"a39b2bf1-e15d-4b28-8c39-f01fee6177c0",
+	//	"./key/ardrive-wallet.json",
+	//)
+	//if err != nil {
+	//	fmt.Println("error arweave_api.ArDriveTurboCreateFolder:", err)
+	//	return
+	//}
+	//fmt.Println("Success:", name)
+
+	txId, err := arweave_api.ArDriveTurboUploadFile(
+		"./go.mod",
 		"./key/ardrive-wallet.json",
 	)
 	if err != nil {
-		fmt.Println("error arweave_api.CreateFolder:", err)
+		fmt.Println("error arweave_api.ArDriveTurboUploadFile:", err)
 		return
 	}
-	fmt.Println("Success:", name)
+	fmt.Println("Success: txId:", txId)
 }

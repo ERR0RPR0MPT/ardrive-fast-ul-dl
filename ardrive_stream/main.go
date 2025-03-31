@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	DefaultPort       = 12888
 	DefaultCachePath  = "./cache"
 	DefaultConfigName = "config.json"
 	FileMetaName      = "fileMeta.json"
@@ -25,7 +26,7 @@ const (
 	maxConcurrency    = 64
 	defaultRangeSize  = 1024 * 1024 * 5
 	rangePrefix       = "bytes="
-	cacheTTL          = 60 * time.Minute
+	cacheTTL          = 10
 )
 
 type FileMeta struct {
